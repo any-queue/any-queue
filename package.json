@@ -1,0 +1,22 @@
+{
+  "name": "one-queue",
+  "version": "1.0.0",
+  "description": "",
+  "main": "jest.config.js",
+  "scripts": {
+    "test": "jest",
+    "build": "rollup src/index.js --output.format cjs --output.file lib/bundle.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {},
+  "devDependencies": {
+    "eslint": "^4.16.0",
+    "eslint-config-prettier": "^2.9.0",
+    "eslint-plugin-prettier": "^2.5.0",
+    "jest": "^22.1.4",
+    "prettier": "1.10.2",
+    "rollup": "^0.54.1"
+  }
+}
