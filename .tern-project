@@ -1,6 +1,14 @@
 {
   "plugins": {
-    "node": {},
-    "es_modules": {}
-  }
+    "es_modules": {},
+    "node": {}
+  },
+  "libs": [
+    "ecmascript"
+  ],
+  "loadEagerly": [
+    "src/**/*.js",
+    "src/**/*.mjs"
+  ],
+  "ecmaVersion": 7
 }
