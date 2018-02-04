@@ -2,13 +2,11 @@
 import mysql from "mysql";
 import assert from "assert";
 import { promisify } from "util";
-import { contains } from "ramda";
-import { Queue, Worker } from "./index.mjs";
-import Countdown from "./countdown.mjs";
 import debug from "debug";
-import { spy } from "sinon";
+import testIntegration from "./integration.test.mjs";
 
 const log = debug("test:mysql");
+
 const config = {
   host: "localhost",
   rootUser: "root",
@@ -18,9 +16,6 @@ const config = {
   database: "one_queue_test"
 };
 
-process.on("unhandledRejection", function(err) {
-  throw err;
-});
 const globals = {};
 
 const initializeDatabase = function initializeDatabase(done) {
@@ -82,7 +77,6 @@ const initializeDatabase = function initializeDatabase(done) {
 };
 
 describe("Mysql integration", function() {
-  // DB connections and cleanups take too long sometimes.
   this.timeout(60000);
 
   before("Initialize DB", initializeDatabase);
@@ -185,131 +179,43 @@ describe("Mysql integration", function() {
     });
   });
 
-  const testProcessing = function testProcessing(workerCount, jobCount) {
-    return done => {
-      const queue = new Queue(globals.environment, "test-queue");
-      const createWorker = () => new Worker(globals.environment, "test-queue");
-      const createJob = i => queue.now({ i });
-      const emptyArray = n => Array.from(Array(n));
-      const workers = emptyArray(workerCount).map(createWorker);
-      const createdJobs = emptyArray(jobCount).map((_, i) => createJob(i));
-
-      log(`created ${workers.length} workers and ${createdJobs.length} jobs.`);
-
-      const countdown = new Countdown(jobCount).then(() => {
-        log("countdown reached 0");
-        stop()
-          .then(() => {
-            const actualData = flagJobHandled.args
-              .map(args => args[0])
-              .map(j => j.data);
-
-            const expectedData = emptyArray(jobCount).map((_, i) => ({ i }));
-
-            assert(
-              expectedData.every(data => contains(data, actualData)),
-              "Each job must be handled exactly once"
-            );
-          })
-          .then(done);
-      });
-      const flagJobHandled = spy(() => {
-        countdown.tick();
-      });
-
-      const stop = (() => {
-        const stops = workers.map(w => w.process(flagJobHandled));
-        return () => Promise.all(stops.map(stop => stop()));
-      })();
-    };
-  };
-
-  const testPostConditions = function testPostConditions(
-    workerCount,
-    jobCount
-  ) {
-    return done => {
-      const queue = new Queue(globals.environment, "test-queue");
-      const createWorker = () => new Worker(globals.environment, "test-queue");
-      const createJob = i => queue.now({ i });
-      const emptyArray = n => Array.from(Array(n));
-      const workers = emptyArray(workerCount).map(createWorker);
-      const createdJobs = emptyArray(jobCount).map((_, i) => createJob(i));
-
-      log(`created ${workers.length} workers and ${createdJobs.length} jobs.`);
-
-      const countdown = new Countdown(jobCount).then(() => {
-        log("countdown reached 0");
-        stop()
-          .then(() => globals.environment.readJob({}))
-          .then(jobs => {
-            assert.equal(
-              jobs.length,
-              createdJobs.length,
-              "All jobs are created"
-            );
-            const doneJobs = jobs.filter(j => j.status === "done");
-            assert.equal(doneJobs.length, jobCount, "All jobs must be done");
-          })
-          .then(() => globals.environment.readLock({}))
-          .then(locks => {
-            assert(
-              locks.every(j => ["locked", "backed-off"].includes(j.status)),
-              "All locks must be cleared"
-            );
-          })
-          .then(() =>
-            assert.equal(
-              flagJobHandled.callCount,
-              jobCount,
-              "Handled job count must be equal to created job count"
-            )
-          )
-          .then(done);
-      });
-      const flagJobHandled = spy(() => {
-        countdown.tick();
-      });
-
-      const stop = (() => {
-        const stops = workers.map(w => w.process(flagJobHandled));
-        return () => Promise.all(stops.map(stop => stop()));
-      })();
-    };
-  };
-
-  describe("One worker, one job", () => {
-    it("Processes jobs", testProcessing(1, 1));
-    it("Postconditions", testPostConditions(1, 1));
+  describe("1 worker, 1 job", () => {
+    it("Processes jobs", done =>
+      testIntegration(globals.environment, 1, 1)(done));
   });
 
-  describe("One worker, two jobs", () => {
-    it("Processes jobs", testProcessing(1, 2));
-    it("Postconditions", testPostConditions(1, 2));
+  describe("1 worker, 2 jobs", () => {
+    it("Processes jobs", done =>
+      testIntegration(globals.environment, 1, 2)(done));
   });
 
-  describe("Two workers, one job", () => {
-    it("Processes jobs", testProcessing(2, 1));
-    it("Postconditions", testPostConditions(2, 1));
+  describe("2 workers, 1 job", () => {
+    it("Processes jobs", done =>
+      testIntegration(globals.environment, 2, 1)(done));
   });
 
-  describe("One worker, 100 jobs", () => {
-    it("Processes jobs", testProcessing(1, 100));
-    it("Postconditions", testPostConditions(1, 100));
+  describe("1 worker, 100 jobs", () => {
+    it("Processes jobs", done =>
+      testIntegration(globals.environment, 1, 100)(done));
   });
 
   describe("100 workers, 1 job", () => {
-    it("Processes jobs", testProcessing(100, 1));
-    it("Postconditions", testPostConditions(100, 1));
+    it("Processes jobs", done =>
+      testIntegration(globals.environment, 100, 1)(done));
   });
 
   describe("100 workers, 100 jobs", () => {
-    it("Processes jobs", testProcessing(100, 100));
-    it("Postconditions", testPostConditions(100, 100));
+    it("Processes jobs", done =>
+      testIntegration(globals.environment, 100, 100)(done));
+  });
+
+  describe("10 workers, 1000 jobs", () => {
+    it("Processes jobs", done =>
+      testIntegration(globals.environment, 10, 1000)(done));
   });
 
   describe("100 workers, 1000 jobs", () => {
-    it("Processes jobs", testProcessing(10, 1000));
-    it("Postconditions", testPostConditions(10, 1000));
+    it("Processes jobs", done =>
+      testIntegration(globals.environment, 100, 1000)(done));
   });
 });
