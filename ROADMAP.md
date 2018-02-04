@@ -1,6 +1,5 @@
 * Move countdown to separate library,
 * Clean code up,
-* Return Promise when stopping,
 * Set proper logging up,
 * Improve DB error handling,
 * Allow retry policy for tasks,

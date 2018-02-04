@@ -91,10 +91,6 @@ describe("MongoDB integration", function() {
     });
   });
 
-  const delay = function delay(milliseconds) {
-    return new Promise(resolve => setTimeout(resolve, milliseconds));
-  };
-
   const testProcessing = function testProcessing(workerCount, jobCount) {
     return done => {
       const queue = new Queue(globals.environment, "test-queue");
@@ -108,9 +104,7 @@ describe("MongoDB integration", function() {
 
       const countdown = new Countdown(jobCount).then(() => {
         log("countdown reached 0");
-        stop();
-        // 2000 ms is enough time for workers to stop.
-        delay(2000)
+        stop()
           .then(() => {
             const actualData = flagJobHandled.args
               .map(args => args[0])
@@ -131,9 +125,7 @@ describe("MongoDB integration", function() {
 
       const stop = (() => {
         const stops = workers.map(w => w.process(flagJobHandled));
-        return () => {
-          stops.forEach(stop => stop());
-        };
+        return () => Promise.all(stops.map(stop => stop()));
       })();
     };
   };
@@ -154,10 +146,7 @@ describe("MongoDB integration", function() {
 
       const countdown = new Countdown(jobCount).then(() => {
         log("countdown reached 0");
-        stop();
-
-        // 2000 ms is enough time for workers to stop.
-        delay(2000)
+        stop()
           .then(() => globals.environment.readJob({}))
           .then(jobs => {
             assert.equal(
@@ -190,9 +179,7 @@ describe("MongoDB integration", function() {
 
       const stop = (() => {
         const stops = workers.map(w => w.process(flagJobHandled));
-        return () => {
-          stops.forEach(stop => stop());
-        };
+        return () => Promise.all(stops.map(stop => stop()));
       })();
     };
   };

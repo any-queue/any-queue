@@ -28,103 +28,106 @@ export default class Worker {
 
     log("setting process up");
 
-    setTimeout(async function _process() {
-      stopped ? log("stopped") : log("processing");
+    const stopping = new Promise(resolve => {
+      setTimeout(async function _process() {
+        stopped ? log("stopped") : log("processing");
 
-      if (stopped) return;
+        if (stopped) return resolve();
 
-      //const pickJob = reduce((acc, next) => maxBy(prop("priority"))(acc, next));
-      const DatabaseError = Error("Corrupt database");
-      const delay = function delay(milliseconds) {
-        stopped ? log("stopped. wont delay") : log("delaying", milliseconds);
-        return stopped
-          ? Promise.resolve()
-          : new Promise(resolve => {
-              setTimeout(resolve, milliseconds);
-            });
-      };
-      const wrapPromise = function wrapPromise(maybePromise) {
-        return Promise.resolve().then(() => maybePromise);
-      };
-      const randomInteger = function randomInteger(min, max) {
-        return Math.floor(Math.random() * (max - min) + min);
-      };
-      const pickJob = jobs => jobs[randomInteger(0, jobs.length)];
+        //const pickJob = reduce((acc, next) => maxBy(prop("priority"))(acc, next));
+        const DatabaseError = Error("Corrupt database");
+        const delay = function delay(milliseconds) {
+          stopped ? log("stopped. wont delay") : log("delaying", milliseconds);
+          return stopped
+            ? Promise.resolve()
+            : new Promise(resolve => {
+                setTimeout(resolve, milliseconds);
+              });
+        };
+        const wrapPromise = function wrapPromise(maybePromise) {
+          return Promise.resolve().then(() => maybePromise);
+        };
+        const randomInteger = function randomInteger(min, max) {
+          return Math.floor(Math.random() * (max - min) + min);
+        };
+        const pickJob = jobs => jobs[randomInteger(0, jobs.length)];
 
-      // Tries to lock. If lock is successful, runs fn. Unlocks.
-      const unlock = function unlock(job) {
-        return updateLock(
-          {
+        // Tries to lock. If lock is successful, runs fn. Unlocks.
+        const unlock = function unlock(job) {
+          return updateLock(
+            {
+              job: job._id,
+              queue,
+              worker: name,
+              status: "locking"
+            },
+            { status: "backed-off" }
+          );
+        };
+
+        const sealLock = function sealLock(job) {
+          return updateLock(
+            {
+              job: job._id,
+              queue,
+              worker: name,
+              status: "locking"
+            },
+            { status: "locked" }
+          );
+        };
+
+        const tryLock = async function tryLock(job) {
+          await createLock({
             job: job._id,
             queue,
             worker: name,
             status: "locking"
-          },
-          { status: "backed-off" }
-        );
-      };
+          });
+          const locks = await Promise.all([
+            readLock({ job: job._id, queue, status: "locking" }),
+            readLock({ job: job._id, queue, status: "locked" })
+          ]);
+          const lockCount = locks[0].length + locks[1].length;
 
-      const sealLock = function sealLock(job) {
-        return updateLock(
-          {
-            job: job._id,
-            queue,
-            worker: name,
-            status: "locking"
-          },
-          { status: "locked" }
-        );
-      };
+          log("got", lockCount, "locks");
 
-      const tryLock = async function tryLock(job) {
-        await createLock({
-          job: job._id,
-          queue,
-          worker: name,
-          status: "locking"
-        });
-        const locks = await Promise.all([
-          readLock({ job: job._id, queue, status: "locking" }),
-          readLock({ job: job._id, queue, status: "locked" })
-        ]);
-        const lockCount = locks[0].length + locks[1].length;
+          if (lockCount < 1) throw DatabaseError;
 
-        log("got", lockCount, "locks");
+          return lockCount === 1;
+        };
 
-        if (lockCount < 1) throw DatabaseError;
+        const jobs = await readJob({ queue, status: "new" });
+        log("got", jobs.length, "jobs");
 
-        return lockCount === 1;
-      };
+        if (jobs.length === 0) return delay(1000).then(_process);
 
-      const jobs = await readJob({ queue, status: "new" });
-      log("got", jobs.length, "jobs");
+        const job = pickJob(jobs);
 
-      if (jobs.length === 0) return delay(1000).then(_process);
+        const didLock = await tryLock(job);
 
-      const job = pickJob(jobs);
-
-      const didLock = await tryLock(job);
-
-      return didLock
-        ? wrapPromise(handler(job))
-            .then(() =>
-              updateJob(job._id, { status: "done" }).then(() => sealLock(job))
-            )
-            .catch(error =>
-              updateJob(job._id, {
-                status: "failed",
-                error: error.toString()
-              }).then(() => unlock(job))
-            )
-            .then(() => delay(0))
-            .then(_process)
-        : unlock(job)
-            .then(() => delay(randomInteger(100, 3000)))
-            .then(_process);
-    }, 0);
+        return didLock
+          ? wrapPromise(handler(job))
+              .then(() =>
+                updateJob(job._id, { status: "done" }).then(() => sealLock(job))
+              )
+              .catch(error =>
+                updateJob(job._id, {
+                  status: "failed",
+                  error: error.toString()
+                }).then(() => unlock(job))
+              )
+              .then(() => delay(0))
+              .then(_process)
+          : unlock(job)
+              .then(() => delay(randomInteger(100, 3000)))
+              .then(_process);
+      }, 0);
+    });
 
     return function stop() {
       stopped = true;
+      return stopping;
     };
   }
 }
