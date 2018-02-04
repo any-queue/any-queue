@@ -57,7 +57,7 @@ export default class Worker {
           {
             job: job._id,
             queue,
-            name,
+            worker: name,
             status: "locking"
           },
           { status: "backed-off" }
@@ -69,7 +69,7 @@ export default class Worker {
           {
             job: job._id,
             queue,
-            name,
+            worker: name,
             status: "locking"
           },
           { status: "locked" }
@@ -80,7 +80,7 @@ export default class Worker {
         await createLock({
           job: job._id,
           queue,
-          name,
+          worker: name,
           status: "locking"
         });
         const locks = await Promise.all([
@@ -119,7 +119,7 @@ export default class Worker {
             .then(() => delay(0))
             .then(_process)
         : unlock(job)
-            .then(() => delay(randomInteger(0, 1000)))
+            .then(() => delay(randomInteger(100, 3000)))
             .then(_process);
     }, 0);
 

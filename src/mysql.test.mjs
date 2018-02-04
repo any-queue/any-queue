@@ -1,5 +1,5 @@
 /* eslint-env mocha */
-import { MongoClient, ObjectID } from "mongodb";
+import mysql from "mysql";
 import assert from "assert";
 import { promisify } from "util";
 import { contains } from "ramda";
@@ -8,86 +8,180 @@ import Countdown from "./countdown.mjs";
 import debug from "debug";
 import { spy } from "sinon";
 
-const log = debug("test:mongo");
+const log = debug("test:mysql");
+const config = {
+  host: "localhost",
+  rootUser: "root",
+  rootPassword: "admin",
+  user: "one_queue_test_user",
+  password: "one_queue_test_password",
+  database: "one_queue_test"
+};
 
 process.on("unhandledRejection", function(err) {
   throw err;
 });
 const globals = {};
 
-describe("MongoDB integration", function() {
+const initializeDatabase = function initializeDatabase(done) {
+  const connection = mysql.createConnection({
+    host: config.host,
+    user: config.rootUser,
+    password: config.rootPassword
+  });
+
+  connection.connect(err => {
+    assert.equal(null, err);
+
+    const query = promisify(connection.query.bind(connection));
+
+    query(`DROP DATABASE ${config.database}`)
+      .then(query(`CREATE DATABASE IF NOT EXISTS ${config.database}`))
+      .then(() =>
+        query(`CREATE USER IF NOT EXISTS '${config.user}'@'${config.host}'`)
+      )
+      .then(() =>
+        query(
+          `GRANT ALL ON ${config.database}.* To '${config.user}'@'${
+            config.host
+          }' IDENTIFIED BY '${config.password}';`
+        )
+      )
+      .then(() => query("FLUSH PRIVILEGES"))
+      .then(() => query(`USE ${config.database}`))
+      .then(() =>
+        query(`CREATE TABLE jobs(
+          _id int not null primary key auto_increment,
+          queue varchar(255) not null,
+          data json not null,
+          priority int not null,
+          status enum ('new', 'done', 'failed') not null,
+          error varchar(1000)
+        )`)
+      )
+      .then(() =>
+        query(`CREATE TABLE locks(
+          _id int not null primary key auto_increment,
+          queue varchar(255) not null,
+          worker char(36) not null,
+          job int not null,
+          status enum ('locking', 'locked', 'backed-off'),
+
+          FOREIGN KEY fk_job(job)
+          REFERENCES jobs(_id)
+          ON UPDATE CASCADE
+          ON DELETE CASCADE
+        )`)
+      )
+      .then(promisify(connection.end.bind(connection)))
+      .then(() => {
+        done();
+      })
+      .catch(done);
+  });
+};
+
+describe("Mysql integration", function() {
   // DB connections and cleanups take too long sometimes.
   this.timeout(60000);
-  before("Connect to DB", done => {
-    const url = "mongodb://localhost:27017";
-    const dbName = "one-queue-test";
 
-    MongoClient.connect(url, (err, client) => {
+  before("Initialize DB", initializeDatabase);
+
+  before("Connect to DB", done => {
+    const connection = mysql.createConnection({
+      host: config.host,
+      user: config.user,
+      password: config.password,
+      database: config.database
+    });
+
+    connection.connect(err => {
       assert.equal(null, err);
       log("Connected to server.");
 
-      const db = client.db(dbName);
-      const jobs = db.collection("jobs");
-      const locks = db.collection("locks");
+      const query = promisify(connection.query.bind(connection));
 
-      const promisifyToArray = fn => (...args) => {
-        return new Promise((resolve, reject) => {
-          fn(...args).toArray(
-            (error, result) => (error ? reject(error) : resolve(result))
-          );
-        });
+      const wheres = function wheres(obj = {}) {
+        const formatValue = function formatValue(value) {
+          switch (typeof value) {
+            case "number":
+              return value;
+            case "string":
+              return `'${value}'`;
+            default:
+              return `'${JSON.stringify(value)}'`;
+          }
+        };
+
+        const conditions = Object.keys(obj)
+          .map(k => `${k} = ${formatValue(obj[k])}`)
+          .join(" AND ");
+
+        return conditions ? `WHERE ${conditions}` : "";
       };
 
       const environment = {
-        createJob: function createJob(job) {
-          return promisify(jobs.insertOne.bind(jobs))(job);
+        createJob: function createJob({ queue, data, priority, status }) {
+          return query(`
+          INSERT INTO jobs(queue, data, priority, status)
+          VALUES('${queue}', '${JSON.stringify(
+            data
+          )}', ${priority}, '${status}')
+          `);
         },
-        readJob: function readJob(query) {
-          return promisifyToArray(jobs.find.bind(jobs))(query);
-        },
-        updateJob: function updateJob(id, props) {
-          return promisify(jobs.updateOne.bind(jobs))(
-            { _id: ObjectID(id) },
-            { $set: props }
+        readJob: function readJob(criteria) {
+          return query(`
+          SELECT * FROM jobs 
+          ${wheres(criteria)}
+          `).then(jobs =>
+            jobs.map(j => Object.assign({}, j, { data: JSON.parse(j.data) }))
           );
         },
-        createLock: function createLock(lock) {
-          return promisify(locks.insertOne.bind(locks))(lock);
+        updateJob: function updateJob(id, { status, error }) {
+          return query(`
+          UPDATE jobs
+          SET status = '${status}' ${error ? `, error = ${error}` : ""}
+          WHERE _id = ${id}
+          `);
         },
-        readLock: function readLock(query) {
-          return promisifyToArray(locks.find.bind(locks))(query);
+        createLock: function createLock({ job, queue, worker, status }) {
+          return query(`
+          INSERT INTO locks(job, queue, worker, status)
+          VALUES(${job}, '${queue}', '${worker}', '${status}')
+          `);
         },
-        updateLock: function updateLock(query, props) {
-          return promisify(locks.updateOne.bind(locks))(query, { $set: props });
+        readLock: function readLock(criteria) {
+          return query(`
+          SELECT * FROM locks 
+          ${wheres(criteria)}
+          `);
+        },
+        updateLock: function updateLock(criteria, { status }) {
+          return query(`
+          UPDATE locks
+          SET status = '${status}'
+          ${wheres(criteria)}
+          `);
         }
       };
 
-      globals.client = client;
+      globals.connection = connection;
+      globals.query = query;
       globals.environment = environment;
-      globals.jobs = jobs;
-      globals.locks = locks;
       done();
     });
   });
 
   afterEach("Refresh DB", () => {
-    const deleteJobs = promisify(
-      globals.jobs.deleteMany.bind(globals.jobs, {})
-    );
-
-    const deleteLocks = promisify(
-      globals.locks.deleteMany.bind(globals.locks, {})
-    );
-
-    return Promise.all([deleteJobs(), deleteLocks()]).then(() =>
-      log("DB refreshed")
-    );
+    return globals.query("DELETE FROM jobs").then(() => {
+      log("DB refreshed");
+    });
   });
 
   after("Close DB connection", done => {
-    globals.client.close(() => {
-      log("DB connection closed");
-      done();
+    globals.connection.end(error => {
+      if (!error) log("DB connection closed");
+      done(error);
     });
   });
 
@@ -225,6 +319,11 @@ describe("MongoDB integration", function() {
   describe("100 workers, 100 jobs", () => {
     it("Processes jobs", testProcessing(100, 100));
     it("Postconditions", testPostConditions(100, 100));
+  });
+
+  describe("20 workers, 1000 jobs", () => {
+    it("Processes jobs", testProcessing(10, 1000));
+    it("Postconditions", testPostConditions(10, 1000));
   });
 
   describe("100 workers, 1000 jobs", () => {
