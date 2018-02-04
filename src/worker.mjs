@@ -1,5 +1,6 @@
 import uuid from "uuid/v4";
 import debug from "debug";
+import { max } from "ramda";
 
 export default class Worker {
   constructor(environment, queue, name = uuid()) {
@@ -8,6 +9,7 @@ export default class Worker {
     this.name = name;
     this.log = debug(`worker:${name}`);
     this.stopped = false;
+    this.running = false;
     this.failedLocks = 0;
 
     this.pollingDelay = 1000; // milliseconds
@@ -29,8 +31,9 @@ export default class Worker {
   }
 
   pickJob(jobs) {
-    // todo: use priority
-    return jobs[this.randomInteger(0, jobs.length)];
+    const maxPriority = jobs.map(j => j.priority).reduce(max, -Infinity);
+    const maxPriorityJobs = jobs.filter(j => j.priority === maxPriority);
+    return maxPriorityJobs[this.randomInteger(0, maxPriorityJobs.length)];
   }
 
   unlock(job) {
@@ -146,13 +149,24 @@ export default class Worker {
 
   process(handler) {
     const worker = this;
+
+    if (worker.running) {
+      worker.log("Worker is already running.");
+      return () => {};
+    }
+
+    worker.stopped = false;
+    worker.running = true;
+
     const stopping = new Promise(resolve => {
       setTimeout(() => this._process(handler, resolve), 0);
     });
 
     return function stop() {
       worker.stopped = true;
-      return stopping;
+      return stopping.then(() => {
+        worker.running = false;
+      });
     };
   }
 }

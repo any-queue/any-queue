@@ -4,7 +4,7 @@ export default class Queue {
     this.name = name;
   }
 
-  now(data, priority = Queue.priority.MEDIUM, blockers = []) {
+  now(data, priority = Queue.priority.NORMAL, blockers = []) {
     const { environment, name } = this;
     const { createJob } = environment;
     return createJob({
@@ -30,7 +30,7 @@ export default class Queue {
 Queue.priority = {
   VERY_LOW: 30,
   LOW: 40,
-  MEDIUM: 50,
+  NORMAL: 50,
   HIGH: 60,
   VERY_HIGH: 70
 };
