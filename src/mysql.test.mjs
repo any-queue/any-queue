@@ -1,11 +1,6 @@
-/* eslint-env mocha */
 import mysql from "mysql";
-import assert from "assert";
 import { promisify } from "util";
-import debug from "debug";
 import testIntegration from "./integration.test.mjs";
-
-const log = debug("test:mysql");
 
 const config = {
   host: "localhost",
@@ -18,34 +13,32 @@ const config = {
 
 const globals = {};
 
-const initializeDatabase = function initializeDatabase(done) {
+const initializeDatabase = function initializeDatabase() {
   const connection = mysql.createConnection({
     host: config.host,
     user: config.rootUser,
     password: config.rootPassword
   });
 
-  connection.connect(err => {
-    assert.equal(null, err);
-
-    const query = promisify(connection.query.bind(connection));
-
-    query(`DROP DATABASE ${config.database}`)
-      .then(query(`CREATE DATABASE IF NOT EXISTS ${config.database}`))
-      .then(() =>
-        query(`CREATE USER IF NOT EXISTS '${config.user}'@'${config.host}'`)
-      )
-      .then(() =>
-        query(
-          `GRANT ALL ON ${config.database}.* To '${config.user}'@'${
-            config.host
-          }' IDENTIFIED BY '${config.password}';`
+  return promisify(connection.connect.bind(connection))()
+    .then(() => promisify(connection.query.bind(connection)))
+    .then(query =>
+      query(`DROP DATABASE ${config.database}`)
+        .then(query(`CREATE DATABASE IF NOT EXISTS ${config.database}`))
+        .then(() =>
+          query(`CREATE USER IF NOT EXISTS '${config.user}'@'${config.host}'`)
         )
-      )
-      .then(() => query("FLUSH PRIVILEGES"))
-      .then(() => query(`USE ${config.database}`))
-      .then(() =>
-        query(`CREATE TABLE jobs(
+        .then(() =>
+          query(
+            `GRANT ALL ON ${config.database}.* To '${config.user}'@'${
+              config.host
+            }' IDENTIFIED BY '${config.password}';`
+          )
+        )
+        .then(() => query("FLUSH PRIVILEGES"))
+        .then(() => query(`USE ${config.database}`))
+        .then(() =>
+          query(`CREATE TABLE jobs(
           _id int not null primary key auto_increment,
           queue varchar(255) not null,
           data json not null,
@@ -53,9 +46,9 @@ const initializeDatabase = function initializeDatabase(done) {
           status enum ('new', 'done', 'failed') not null,
           error varchar(1000)
         )`)
-      )
-      .then(() =>
-        query(`CREATE TABLE locks(
+        )
+        .then(() =>
+          query(`CREATE TABLE locks(
           _id int not null primary key auto_increment,
           queue varchar(255) not null,
           worker char(36) not null,
@@ -67,34 +60,22 @@ const initializeDatabase = function initializeDatabase(done) {
           ON UPDATE CASCADE
           ON DELETE CASCADE
         )`)
-      )
-      .then(promisify(connection.end.bind(connection)))
-      .then(() => {
-        done();
-      })
-      .catch(done);
-  });
+        )
+    )
+    .then(promisify(connection.end.bind(connection)));
 };
 
-describe("Mysql integration", function() {
-  this.timeout(60000);
+const connectToDatabase = function connectToDatabase() {
+  const connection = mysql.createConnection({
+    host: config.host,
+    user: config.user,
+    password: config.password,
+    database: config.database
+  });
 
-  before("Initialize DB", initializeDatabase);
-
-  before("Connect to DB", done => {
-    const connection = mysql.createConnection({
-      host: config.host,
-      user: config.user,
-      password: config.password,
-      database: config.database
-    });
-
-    connection.connect(err => {
-      assert.equal(null, err);
-      log("Connected to server.");
-
-      const query = promisify(connection.query.bind(connection));
-
+  return promisify(connection.connect.bind(connection))()
+    .then(() => promisify(connection.query.bind(connection)))
+    .then(query => {
       const wheres = function wheres(obj = {}) {
         const formatValue = function formatValue(value) {
           switch (typeof value) {
@@ -161,61 +142,22 @@ describe("Mysql integration", function() {
 
       globals.connection = connection;
       globals.query = query;
-      globals.environment = environment;
-      done();
+
+      return environment;
     });
-  });
+};
 
-  afterEach("Refresh DB", () => {
-    return globals.query("DELETE FROM jobs").then(() => {
-      log("DB refreshed");
-    });
-  });
+const setup = function() {
+  return initializeDatabase().then(connectToDatabase);
+};
 
-  after("Close DB connection", done => {
-    globals.connection.end(error => {
-      if (!error) log("DB connection closed");
-      done(error);
-    });
-  });
+const refresh = function() {
+  return globals.query("DELETE FROM jobs");
+};
 
-  describe("1 worker, 1 job", () => {
-    it("Processes jobs", done =>
-      testIntegration(globals.environment, 1, 1)(done));
-  });
+const teardown = function() {
+  const connection = globals.connection;
+  return promisify(connection.end.bind(connection))();
+};
 
-  describe("1 worker, 2 jobs", () => {
-    it("Processes jobs", done =>
-      testIntegration(globals.environment, 1, 2)(done));
-  });
-
-  describe("2 workers, 1 job", () => {
-    it("Processes jobs", done =>
-      testIntegration(globals.environment, 2, 1)(done));
-  });
-
-  describe("1 worker, 100 jobs", () => {
-    it("Processes jobs", done =>
-      testIntegration(globals.environment, 1, 100)(done));
-  });
-
-  describe("100 workers, 1 job", () => {
-    it("Processes jobs", done =>
-      testIntegration(globals.environment, 100, 1)(done));
-  });
-
-  describe("100 workers, 100 jobs", () => {
-    it("Processes jobs", done =>
-      testIntegration(globals.environment, 100, 100)(done));
-  });
-
-  describe("10 workers, 1000 jobs", () => {
-    it("Processes jobs", done =>
-      testIntegration(globals.environment, 10, 1000)(done));
-  });
-
-  describe("100 workers, 1000 jobs", () => {
-    it("Processes jobs", done =>
-      testIntegration(globals.environment, 100, 1000)(done));
-  });
-});
+testIntegration("mysql", setup, refresh, teardown);
