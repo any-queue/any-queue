@@ -4,20 +4,28 @@ export default class Queue {
     this.name = name;
   }
 
-  now(data, priority = Queue.priority.NORMAL, blockers = []) {
+  async now(data, { priority = Queue.priority.NORMAL, blockers = [] } = {}) {
     const { environment, name } = this;
-    const { createJob } = environment;
-    return createJob({
+    const { createJob, createLock } = environment;
+
+    const job = await createJob({
       queue: name,
       data,
       priority,
-      blockers,
-      status: "new",
+      status: blockers.length > 0 ? "blocked" : "new",
       attempts: 0,
       outcome: [],
       processDate: [],
       scheduledDate: Date().toString()
     });
+
+    await Promise.all(
+      blockers.map(blocker =>
+        createLock({ queue: name, job, blocker, status: "locked" })
+      )
+    );
+
+    return job;
   }
 
   later() {}

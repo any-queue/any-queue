@@ -2,63 +2,55 @@
 import { Queue, Worker } from "./index.mjs";
 import Countdown from "./countdown.mjs";
 import debug from "debug";
-import { contains } from "ramda";
+import { countBy, head, prop, sortBy } from "ramda";
 import assert from "assert";
 import { spy } from "sinon";
+
+const emptyArray = length => Array.from(Array(length));
 
 export default function testIntegration(name, setup, refresh, teardown) {
   const log = debug(`test:integration:${name}`);
   let environment;
 
-  const test = function test(workerCount, jobCount) {
+  const assertJobsCreated = function assertJobsCreated(jobCount) {
+    return environment.readJob({}).then(jobs => {
+      assert.equal(jobs.length, jobCount, "Some jobs were not created.");
+    });
+  };
+
+  const assertJobsDone = function assertJobsDone(jobCount) {
+    return environment.readJob({}).then(jobs => {
+      const doneJobs = jobs.filter(j => j.status === "done");
+      assert.equal(doneJobs.length, jobCount, "Some jobs have not been done.");
+    });
+  };
+
+  const assertJobsHandled = function assertJobsHandled(jobCount, handledJobs) {
+    const handledData = handledJobs.map(prop("data"));
+    const timesHandled = Object.values(countBy(prop("i"))(handledData));
+    const wasAnyHandledTwice = timesHandled.some(times => times > 1);
+
+    assert(handledJobs.length >= jobCount, "Some jobs were not handled.");
+    assert(!wasAnyHandledTwice, "Some jobs were handled twice.");
+  };
+
+  const testJobProcessing = function testJobProcessing(workerCount, jobCount) {
     return done => {
       const queue = new Queue(environment, "test-queue");
       const createWorker = () => new Worker(environment, "test-queue");
       const createJob = i => queue.now({ i });
-      const emptyArray = n => Array.from(Array(n));
       const workers = emptyArray(workerCount).map(createWorker);
       const createdJobs = emptyArray(jobCount).map((_, i) => createJob(i));
 
       log(`created ${workers.length} workers and ${createdJobs.length} jobs.`);
 
-      const countdown = new Countdown(jobCount).then(() => {
-        log("countdown reached 0");
-        stop()
-          .then(() => environment.readJob({}))
-          .then(jobs => {
-            assert.equal(
-              jobs.length,
-              createdJobs.length,
-              "All jobs must be created"
-            );
-            const doneJobs = jobs.filter(j => j.status === "done");
-            assert.equal(doneJobs.length, jobCount, "All jobs must be done");
-          })
-          .then(() => environment.readLock({}))
-          .then(locks => {
-            assert(
-              locks.every(j => ["locked", "backed-off"].includes(j.status)),
-              "All locks must be cleared"
-            );
-          })
-          .then(() => {
-            const actualData = flagJobHandled.args
-              .map(args => args[0])
-              .map(j => j.data);
+      const countdown = new Countdown(jobCount)
+        .then(() => stop())
+        .then(() => assertJobsCreated(jobCount))
+        .then(() => assertJobsDone(jobCount))
+        .then(() => assertJobsHandled(jobCount, flagJobHandled.args.map(head)))
+        .then(done);
 
-            const expectedData = emptyArray(jobCount).map((_, i) => ({ i }));
-
-            assert(
-              expectedData.every(data => contains(data, actualData)),
-              "Each job must be handled exactly once"
-            );
-            assert(
-              actualData.every(data => contains(data, expectedData)),
-              "Each job must be handled exactly once"
-            );
-          })
-          .then(done);
-      });
       const flagJobHandled = spy(() => {
         countdown.tick();
       });
@@ -70,10 +62,110 @@ export default function testIntegration(name, setup, refresh, teardown) {
     };
   };
 
-  const testCase = function testCase(workerCount, jobCount) {
+  const assertPriority = function assertPriority(handledJobs) {
+    const handledData = handledJobs.map(prop("data"));
+    assert.deepEqual(
+      handledData,
+      sortBy(data => -data.i, handledData),
+      "Job priority was not observed."
+    );
+  };
+
+  const testJobPriority = function testJobPriority(workerCount, jobCount) {
+    return done => {
+      const queue = new Queue(environment, "test-queue");
+      const createWorker = () => new Worker(environment, "test-queue");
+      const createJob = i => queue.now({ i }, { priority: i });
+      const workers = emptyArray(workerCount).map(createWorker);
+      const createdJobs = emptyArray(jobCount).map((_, i) => createJob(i));
+
+      log(`created ${workers.length} workers and ${createdJobs.length} jobs.`);
+
+      const countdown = new Countdown(jobCount)
+        .then(() => stop())
+        .then(() => assertPriority(flagJobHandled.args.map(head)))
+        .then(done);
+
+      const flagJobHandled = spy(() => {
+        countdown.tick();
+      });
+
+      const stop = (() => {
+        const stops = workers.map(w => w.process(flagJobHandled));
+        return () => Promise.all(stops.map(stop => stop()));
+      })();
+    };
+  };
+
+  const assertHandlingOrder = function assertHandlingOrder(handledJobs) {
+    const handledData = handledJobs.map(prop("data"));
+    assert.deepEqual(
+      handledData,
+      sortBy(prop("i"), handledData),
+      "Job blockers were not observed."
+    );
+  };
+
+  const testJobBlocker = function testJobBlocker(workerCount, jobCount) {
+    return done => {
+      const createWorker = () => new Worker(environment, "test-queue");
+      const workers = emptyArray(workerCount).map(createWorker);
+
+      const queue = new Queue(environment, "test-queue");
+      const createJob = i => blockers => queue.now({ i }, { blockers });
+      const creatingJobs = emptyArray(jobCount)
+        .map((_, i) => createJob(i))
+        .reduce(
+          (creatingJobs, creator) =>
+            creatingJobs.then(jobs =>
+              creator(jobs).then(nextJob => jobs.concat(nextJob))
+            ),
+          Promise.resolve([])
+        );
+
+      creatingJobs.then(createdJobs => {
+        log(
+          `created ${workers.length} workers and ${createdJobs.length} jobs.`
+        );
+
+        const countdown = new Countdown(jobCount)
+          .then(() => stop())
+          .then(() => assertHandlingOrder(flagJobHandled.args.map(head)))
+          .then(done);
+
+        const flagJobHandled = spy(() => {
+          countdown.tick();
+        });
+
+        const stop = (() => {
+          const stops = workers.map(w => w.process(flagJobHandled));
+          return () => Promise.all(stops.map(stop => stop()));
+        })();
+      });
+    };
+  };
+
+  const jobProcessingTestCase = function jobProcessingTestCase(
+    workerCount,
+    jobCount
+  ) {
     it(
       `Processes ${jobCount} jobs with ${workerCount} workers`,
-      test(workerCount, jobCount)
+      testJobProcessing(workerCount, jobCount)
+    );
+  };
+
+  const priorityTestCase = function priorityTestCase(workerCount, jobCount) {
+    it(
+      `Processes ${jobCount} jobs with ${workerCount} workers, observing priority`,
+      testJobPriority(workerCount, jobCount)
+    );
+  };
+
+  const blockersTestCase = function blockersTestCase(workerCount, jobCount) {
+    it(
+      `Processes ${jobCount} jobs with ${workerCount} workers, observing blockers`,
+      testJobBlocker(workerCount, jobCount)
     );
   };
 
@@ -83,12 +175,15 @@ export default function testIntegration(name, setup, refresh, teardown) {
     beforeEach("Refresh", refresh);
     after("Teardown", teardown);
 
-    testCase(1, 1);
-    testCase(1, 2);
-    testCase(2, 1);
-    testCase(1, 100);
-    testCase(100, 1);
-    testCase(100, 100);
-    testCase(10, 1000);
+    jobProcessingTestCase(1, 1);
+    jobProcessingTestCase(1, 2);
+    jobProcessingTestCase(2, 1);
+    priorityTestCase(1, 1);
+    priorityTestCase(1, 20);
+    blockersTestCase(1, 1);
+    blockersTestCase(5, 20);
+    jobProcessingTestCase(1, 100);
+    jobProcessingTestCase(100, 1);
+    jobProcessingTestCase(10, 1000);
   });
 }

@@ -110,6 +110,43 @@ export default class Worker {
     return delay;
   }
 
+  async unblock(blockerId) {
+    const { environment, queue, log } = this;
+    const { updateJob, readLock, updateLock } = environment;
+
+    const removeLock = async function removeLock(lock) {
+      // Working under the asumptions that:
+      // * jobs that have blockers are in 'blocked' status.
+      // * all locks of a job in 'blocked' status are caused by blockers (not workers).
+      const remainingLocks = await readLock({
+        queue,
+        job: lock.job,
+        status: "locked"
+      });
+      if (remainingLocks.length === 0) {
+        log(`No lock remaining for job ${lock.job}, will unblock job.`);
+        await updateJob(lock.job, { status: "new" });
+      }
+    };
+
+    log(`Blocker ${blockerId} finished.`);
+
+    const locksToRemove = await readLock({
+      queue,
+      blocker: blockerId,
+      status: "locked"
+    });
+
+    log(`Will remove locks [${locksToRemove.map(l => l._id).join(",")}].`);
+
+    await updateLock(
+      { queue, blocker: blockerId, status: "locked" },
+      { status: "backed-off" }
+    );
+
+    return Promise.all(locksToRemove.map(removeLock));
+  }
+
   async _process(handler, done) {
     const { log } = this;
 
@@ -122,7 +159,7 @@ export default class Worker {
     log("got", jobs.length, "jobs");
 
     if (jobs.length === 0) {
-      return this.delay(this.stopped ? 0 : this.pollindDelay).then(() =>
+      return this.delay(this.stopped ? 0 : this.pollingDelay).then(() =>
         this._process(handler, done)
       );
     }
@@ -134,17 +171,23 @@ export default class Worker {
     if (didLock) this.failedLocks = 0;
     else ++this.failedLocks;
 
-    return didLock
+    return (didLock
       ? this.wrapPromise(handler(job))
-          .then(() => this.updateFinishedJob(job))
-          .catch(error =>
-            this.updateFailedJob(job, error).then(() => this.unlock(job))
+          .then(() =>
+            this.updateFinishedJob(job).then(
+              () => this.unblock(job._id),
+              error => this.updateFailedJob(job, error)
+            )
           )
           .then(() => this.delay())
           .then(() => this._process(handler, done))
       : this.unlock(job)
           .then(() => this.delay(this.stopped ? 0 : this.exponentialBackoff()))
-          .then(() => this._process(handler, done));
+          .then(() => this._process(handler, done))
+    ).catch(error => {
+      log("Processing failed", error);
+      throw error;
+    });
   }
 
   process(handler) {

@@ -14,22 +14,22 @@ const setup = function setup() {
 
     const environment = {
       createJob: function createJob(job) {
-        return jobs.insertOne(job);
+        return jobs.insertOne(job).then(({ insertedId }) => insertedId);
       },
       readJob: function readJob(query) {
         return jobs.find(query).toArray();
       },
       updateJob: function updateJob(id, props) {
-        return jobs.updateOne({ _id: ObjectID(id) }, { $set: props });
+        return jobs.updateMany({ _id: ObjectID(id) }, { $set: props });
       },
       createLock: function createLock(lock) {
-        return locks.insertOne(lock);
+        return locks.insertOne(lock).then(({ insertedId }) => insertedId);
       },
       readLock: function readLock(query) {
         return locks.find(query).toArray();
       },
       updateLock: function updateLock(query, props) {
-        return locks.updateOne(query, { $set: props });
+        return locks.updateMany(query, { $set: props });
       }
     };
 

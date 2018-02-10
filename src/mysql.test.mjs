@@ -43,7 +43,7 @@ const initializeDatabase = function initializeDatabase() {
           queue varchar(255) not null,
           data json not null,
           priority int not null,
-          status enum ('new', 'done', 'failed') not null,
+          status enum ('new', 'blocked', 'done', 'failed') not null,
           error varchar(1000)
         )`)
         )
@@ -51,7 +51,8 @@ const initializeDatabase = function initializeDatabase() {
           query(`CREATE TABLE locks(
           _id int not null primary key auto_increment,
           queue varchar(255) not null,
-          worker char(36) not null,
+          worker char(36),
+          blocker char(36),
           job int not null,
           status enum ('locking', 'locked', 'backed-off'),
 
@@ -76,18 +77,20 @@ const connectToDatabase = function connectToDatabase() {
   return promisify(connection.connect.bind(connection))()
     .then(() => promisify(connection.query.bind(connection)))
     .then(query => {
-      const wheres = function wheres(obj = {}) {
-        const formatValue = function formatValue(value) {
-          switch (typeof value) {
-            case "number":
-              return value;
-            case "string":
-              return `'${value}'`;
-            default:
-              return `'${JSON.stringify(value)}'`;
-          }
-        };
+      const formatValue = function formatValue(value) {
+        switch (typeof value) {
+          case "number":
+            return value;
+          case "string":
+            return `'${value}'`;
+          case "undefined":
+            return "null";
+          default:
+            return `'${JSON.stringify(value)}'`;
+        }
+      };
 
+      const wheres = function wheres(obj = {}) {
         const conditions = Object.keys(obj)
           .map(k => `${k} = ${formatValue(obj[k])}`)
           .join(" AND ");
@@ -102,7 +105,7 @@ const connectToDatabase = function connectToDatabase() {
           VALUES('${queue}', '${JSON.stringify(
             data
           )}', ${priority}, '${status}')
-          `);
+          `).then(({ insertId }) => insertId);
         },
         readJob: function readJob(criteria) {
           return query(`
@@ -119,11 +122,19 @@ const connectToDatabase = function connectToDatabase() {
           WHERE _id = ${id}
           `);
         },
-        createLock: function createLock({ job, queue, worker, status }) {
+        createLock: function createLock({
+          job,
+          queue,
+          worker,
+          status,
+          blocker
+        }) {
           return query(`
-          INSERT INTO locks(job, queue, worker, status)
-          VALUES(${job}, '${queue}', '${worker}', '${status}')
-          `);
+          INSERT INTO locks(job, queue, worker, blocker, status)
+          VALUES(${job}, '${queue}', ${formatValue(worker)}, ${formatValue(
+            blocker
+          )}, '${status}')
+          `).then(({ insertId }) => insertId);
         },
         readLock: function readLock(criteria) {
           return query(`
