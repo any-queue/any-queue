@@ -23,8 +23,8 @@ const initializeDatabase = function initializeDatabase() {
   return promisify(connection.connect.bind(connection))()
     .then(() => promisify(connection.query.bind(connection)))
     .then(query =>
-      query(`DROP DATABASE ${config.database}`)
-        .then(query(`CREATE DATABASE IF NOT EXISTS ${config.database}`))
+      query(`DROP DATABASE IF EXISTS ${config.database}`)
+        .then(query(`CREATE DATABASE ${config.database}`))
         .then(() =>
           query(`CREATE USER IF NOT EXISTS '${config.user}'@'${config.host}'`)
         )
