@@ -13,9 +13,11 @@
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
+  "license": "MIT",
   "dependencies": {
+    "daggy": "^1.2.0",
     "debug": "^3.1.0",
+    "delay": "^2.0.0",
     "ramda": "^0.25.0",
     "sinon": "^4.2.2",
     "supports-color": "^5.1.0",

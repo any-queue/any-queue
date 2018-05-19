@@ -1,43 +1,55 @@
 import uuid from "uuid/v4";
 import debug from "debug";
 import { max } from "ramda";
+import { taggedSum as sum } from "daggy";
+import delay from "delay";
 
-export default class Worker {
-  constructor(environment, queue, name = uuid()) {
-    this.environment = environment;
-    this.queue = queue;
-    this.name = name;
-    this.log = debug(`worker:${name}`);
-    this.stopped = false;
-    this.running = false;
-    this.failedLocks = 0;
+const randomInteger = function randomInteger(min, max) {
+  return Math.floor(Math.random() * (max - min) + min);
+};
 
-    this.pollingDelay = 1000; // milliseconds
-    this.backoffDelay = 50; // milliseconds
-  }
+const JobProcessResult = sum("WorkdayResult", {
+  QueueEmpty: [],
+  LockCollision: [],
+  Handled: [],
+  HandlerError: ["details"]
+});
 
-  cancel() {}
+const WorkerState = sum("WorkerState", {
+  AtHome: [],
+  GoingHome: [],
+  AtWork: [],
+  Sick: ["details"]
+});
 
-  retry() {}
+const wrapPromise = function wrapPromise(x) {
+  return Promise.resolve().then(() => x);
+};
 
-  promote() {}
+const exponentialBackoff = function exponentialBackoff(
+  backoffDelay,
+  collisionCount
+) {
+  return randomInteger(0, 2 ** collisionCount - 1) * backoffDelay;
+};
 
-  wrapPromise(maybePromise) {
-    return this.delay().then(() => maybePromise);
-  }
+export default function createWorker(environment, queue, name = uuid()) {
+  const log = debug(`worker:${name}`);
+  const pollingDelay = 1000; // milliseconds
+  const backoffDelay = 50; // milliseconds
+  let state = WorkerState.AtHome;
 
-  randomInteger(min, max) {
-    return Math.floor(Math.random() * (max - min) + min);
-  }
+  // ------------------
+  // Persistence layer.
+  // ------------------
 
-  pickJob(jobs) {
+  const pickJob = function pickJob(jobs) {
     const maxPriority = jobs.map(j => j.priority).reduce(max, -Infinity);
     const maxPriorityJobs = jobs.filter(j => j.priority === maxPriority);
-    return maxPriorityJobs[this.randomInteger(0, maxPriorityJobs.length)];
-  }
+    return maxPriorityJobs[randomInteger(0, maxPriorityJobs.length)];
+  };
 
-  unlock(job) {
-    const { environment, queue, name } = this;
+  const unlock = function unlock(job) {
     const { updateLock } = environment;
     return updateLock(
       {
@@ -48,10 +60,9 @@ export default class Worker {
       },
       { status: "backed-off" }
     );
-  }
+  };
 
-  async tryLock(job) {
-    const { environment, queue, name, log } = this;
+  const tryLock = async function tryLock(job) {
     const { createLock, readLock } = environment;
     await createLock({
       job: job._id,
@@ -74,44 +85,27 @@ export default class Worker {
     if (lockCount < 1) throw Error("Corrupt database: cannot find lock.");
 
     return lockCount === 1;
-  }
+  };
 
-  updateFinishedJob(job) {
-    const { environment } = this;
+  const updateFinishedJob = function updateFinishedJob(job) {
     const { updateJob } = environment;
     return updateJob(job._id, { status: "done" });
-  }
+  };
 
-  updateFailedJob(job, error) {
-    const { environment } = this;
+  const updateFailedJob = function updateFailedJob(job, error) {
     const { updateJob } = environment;
     return updateJob(job._id, {
       status: "failed",
       error: error.toString()
     });
-  }
+  };
 
-  delay(milliseconds = 0) {
-    return new Promise(resolve => {
-      setTimeout(resolve, milliseconds);
-    });
-  }
-
-  readJob() {
-    const { environment, queue } = this;
+  const readJob = function readJob() {
     const { readJob } = environment;
     return readJob({ queue, status: "new" });
-  }
+  };
 
-  exponentialBackoff() {
-    const delay =
-      this.randomInteger(0, 2 ** this.failedLocks - 1) * this.backoffDelay;
-    this.log(`will back off for ${delay} milliseconds`);
-    return delay;
-  }
-
-  async unblock(blockerId) {
-    const { environment, queue, log } = this;
+  const unblock = async function unblock(blockerId) {
     const { updateJob, readLock, updateLock } = environment;
 
     const removeLock = async function removeLock(lock) {
@@ -145,71 +139,145 @@ export default class Worker {
     );
 
     return Promise.all(locksToRemove.map(removeLock));
-  }
+  };
 
-  async _process(handler, done) {
-    const { log } = this;
+  // ------------------
+  // Work flow logic.
+  // ------------------
 
-    this.stopped ? log("stopped") : log("processing");
-
-    if (this.stopped) return done();
-
-    const jobs = await this.readJob();
+  const processJob = async function processJob(handler) {
+    const jobs = await readJob();
 
     log("got", jobs.length, "jobs");
 
-    if (jobs.length === 0) {
-      return this.delay(this.stopped ? 0 : this.pollingDelay).then(() =>
-        this._process(handler, done)
-      );
+    if (jobs.length === 0) return JobProcessResult.QueueEmpty;
+
+    const job = pickJob(jobs);
+
+    const didLock = await tryLock(job);
+
+    if (!didLock) {
+      await unlock(job);
+      return JobProcessResult.LockCollision;
     }
 
-    const job = this.pickJob(jobs);
+    return wrapPromise(handler(job)).then(
+      () =>
+        updateFinishedJob(job)
+          .then(() => unblock(job._id))
+          .then(() => JobProcessResult.Handled),
+      error =>
+        updateFailedJob(job, error).then(() =>
+          JobProcessResult.HandlerError(error)
+        )
+    );
+  };
 
-    const didLock = await this.tryLock(job);
-
-    if (didLock) this.failedLocks = 0;
-    else ++this.failedLocks;
-
-    return (didLock
-      ? this.wrapPromise(handler(job))
-          .then(() =>
-            this.updateFinishedJob(job).then(
-              () => this.unblock(job._id),
-              error => this.updateFailedJob(job, error)
-            )
-          )
-          .then(() => this.delay())
-          .then(() => this._process(handler, done))
-      : this.unlock(job)
-          .then(() => this.delay(this.stopped ? 0 : this.exponentialBackoff()))
-          .then(() => this._process(handler, done))
-    ).catch(error => {
-      log("Processing failed", error);
-      throw error;
-    });
-  }
-
-  process(handler) {
-    const worker = this;
-
-    if (worker.running) {
-      worker.log("Worker is already running.");
-      return () => {};
+  const setState = function setState(newState) {
+    if (WorkerState.Sick.is(state)) {
+      log(`Cannot update worker state to ${newState} from ${state}.`);
+      return Promise.reject("worker in error state");
     }
 
-    worker.stopped = false;
-    worker.running = true;
+    if (!WorkerState.is(newState)) {
+      log(`Cannot update worker state. Invalid new state: ${newState}`);
+      state = WorkerState.Sick(`Invalid new state: ${newState}`);
+      return Promise.reject("invalid new state");
+    }
 
-    const stopping = new Promise(resolve => {
-      setTimeout(() => this._process(handler, resolve), 0);
+    state = newState;
+    return Promise.resolve();
+  };
+
+  const parseResult = function parseResult(previousCollisionCount, result) {
+    return result.cata({
+      LockCollision: () => ({
+        delayTime: exponentialBackoff(backoffDelay, previousCollisionCount),
+        collisionCount: previousCollisionCount + 1
+      }),
+      QueueEmpty: () => ({
+        delayTime: pollingDelay,
+        collisionCount: 0
+      }),
+      Handled: () => ({
+        delayTime: 0,
+        collisionCount: 0
+      }),
+      HandledError: () => ({
+        delayTime: 0,
+        collisionCount: 0
+      })
     });
+  };
 
-    return function stop() {
-      worker.stopped = true;
-      return stopping.then(() => {
-        worker.running = false;
+  const loop = async function loop({ handler, delayTime, collisionCount }) {
+    return state.cata({
+      AtHome: () => {
+        return setState(WorkerState.AtWork).then(() =>
+          loop({ handler, delayTime, collisionCount })
+        );
+      },
+      GoingHome: () => {
+        return setState(WorkerState.AtHome);
+      },
+      Sick: details => {
+        log("Loop called while on error state");
+        return Promise.reject(details);
+      },
+      AtWork: () => {
+        return delay(delayTime)
+          .then(() => processJob(handler))
+          .then(result => parseResult(collisionCount, result))
+          .then(({ delayTime, collisionCount }) => {
+            log(
+              `will back off for ${delayTime} milliseconds after ${collisionCount} collisions`
+            );
+            return loop({ handler, delayTime, collisionCount });
+          });
+      }
+    });
+  };
+
+  return {
+    process: function process(
+      handler,
+      handleError = error => {
+        throw error;
+      }
+    ) {
+      return state.cata({
+        AtWork: () => {
+          log("already at work");
+          return () => {};
+        },
+        GoingHome: () => {
+          log("going home");
+          return () => {};
+        },
+        Sick: () => {
+          log("sick");
+          return () => {};
+        },
+        AtHome: () => {
+          const running = loop({
+            handler,
+            delayTime: 0,
+            collisionCount: 0
+          }).catch(handleError);
+
+          return function stop() {
+            return state.cata({
+              AtHome: () => Promise.reject(Error("Cannot stop an idle worker")),
+              GoingHome: () =>
+                Promise.reject(Error("Worker is already stopping")),
+              AtWork: () => {
+                setState(WorkerState.GoingHome);
+                return running;
+              }
+            });
+          };
+        }
       });
-    };
-  }
+    }
+  };
 }
