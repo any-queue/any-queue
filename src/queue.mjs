@@ -1,12 +1,17 @@
-export default class Queue {
-  constructor(environment, name) {
-    this.environment = environment;
-    this.name = name;
-  }
+export default function createQueue(persistenceInterface, name) {
+  const PRIORITY = {
+    VERY_LOW: 30,
+    LOW: 40,
+    NORMAL: 50,
+    HIGH: 60,
+    VERY_HIGH: 70
+  };
 
-  async now(data, { priority = Queue.priority.NORMAL, blockers = [] } = {}) {
-    const { environment, name } = this;
-    const { createJob, createLock } = environment;
+  const now = async function now(
+    data,
+    { priority = PRIORITY.NORMAL, blockers = [] } = {}
+  ) {
+    const { createJob, createLock } = persistenceInterface;
 
     const job = await createJob({
       queue: name,
@@ -26,19 +31,25 @@ export default class Queue {
     );
 
     return job;
-  }
+  };
 
-  later() {}
+  const later = function later() {
+    // TBI
+  };
 
-  repeat() {}
+  const repeat = function repeat() {
+    // TBI
+  };
 
-  after() {}
+  const after = function after() {
+    // TBI
+  };
+
+  return {
+    PRIORITY,
+    now,
+    later,
+    repeat,
+    after
+  };
 }
-
-Queue.priority = {
-  VERY_LOW: 30,
-  LOW: 40,
-  NORMAL: 50,
-  HIGH: 60,
-  VERY_HIGH: 70
-};

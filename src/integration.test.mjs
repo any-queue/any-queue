@@ -36,14 +36,6 @@ export default function testIntegration(name, setup, refresh, teardown) {
 
   const testJobProcessing = function testJobProcessing(workerCount, jobCount) {
     return done => {
-      const queue = new Queue(environment, "test-queue");
-      const createWorker = () => new Worker(environment, "test-queue");
-      const createJob = i => queue.now({ i });
-      const workers = emptyArray(workerCount).map(createWorker);
-      const createdJobs = emptyArray(jobCount).map((_, i) => createJob(i));
-
-      log(`created ${workers.length} workers and ${createdJobs.length} jobs.`);
-
       const countdown = new Countdown(jobCount)
         .then(() => stop())
         .then(() => assertJobsCreated(jobCount))
@@ -55,9 +47,22 @@ export default function testIntegration(name, setup, refresh, teardown) {
         countdown.tick();
       });
 
+      const queue = new Queue(environment, "test-queue");
+      const createWorker = () =>
+        Worker({
+          persistenceInterface: environment,
+          queueId: "test-queue",
+          workInstructions: flagJobHandled
+        });
+      const createJob = i => queue.now({ i });
+      const workers = emptyArray(workerCount).map(createWorker);
+      const createdJobs = emptyArray(jobCount).map((_, i) => createJob(i));
+
+      log(`created ${workers.length} workers and ${createdJobs.length} jobs.`);
+
       const stop = (() => {
-        const stops = workers.map(w => w.process(flagJobHandled));
-        return () => Promise.all(stops.map(stop => stop()));
+        workers.forEach(w => w.punchIn());
+        return () => Promise.all(workers.map(w => w.punchOut()));
       })();
     };
   };
@@ -73,14 +78,6 @@ export default function testIntegration(name, setup, refresh, teardown) {
 
   const testJobPriority = function testJobPriority(workerCount, jobCount) {
     return done => {
-      const queue = new Queue(environment, "test-queue");
-      const createWorker = () => new Worker(environment, "test-queue");
-      const createJob = i => queue.now({ i }, { priority: i });
-      const workers = emptyArray(workerCount).map(createWorker);
-      const createdJobs = emptyArray(jobCount).map((_, i) => createJob(i));
-
-      log(`created ${workers.length} workers and ${createdJobs.length} jobs.`);
-
       const countdown = new Countdown(jobCount)
         .then(() => stop())
         .then(() => assertPriority(flagJobHandled.args.map(head)))
@@ -90,9 +87,22 @@ export default function testIntegration(name, setup, refresh, teardown) {
         countdown.tick();
       });
 
+      const queue = new Queue(environment, "test-queue");
+      const createWorker = () =>
+        Worker({
+          persistenceInterface: environment,
+          queueId: "test-queue",
+          workInstructions: flagJobHandled
+        });
+      const createJob = i => queue.now({ i }, { priority: i });
+      const workers = emptyArray(workerCount).map(createWorker);
+      const createdJobs = emptyArray(jobCount).map((_, i) => createJob(i));
+
+      log(`created ${workers.length} workers and ${createdJobs.length} jobs.`);
+
       const stop = (() => {
-        const stops = workers.map(w => w.process(flagJobHandled));
-        return () => Promise.all(stops.map(stop => stop()));
+        workers.forEach(w => w.punchIn());
+        return () => Promise.all(workers.map(w => w.punchOut()));
       })();
     };
   };
@@ -108,9 +118,6 @@ export default function testIntegration(name, setup, refresh, teardown) {
 
   const testJobBlocker = function testJobBlocker(workerCount, jobCount) {
     return done => {
-      const createWorker = () => new Worker(environment, "test-queue");
-      const workers = emptyArray(workerCount).map(createWorker);
-
       const queue = new Queue(environment, "test-queue");
       const createJob = i => blockers => queue.now({ i }, { blockers });
       const creatingJobs = emptyArray(jobCount)
@@ -124,10 +131,6 @@ export default function testIntegration(name, setup, refresh, teardown) {
         );
 
       creatingJobs.then(createdJobs => {
-        log(
-          `created ${workers.length} workers and ${createdJobs.length} jobs.`
-        );
-
         const countdown = new Countdown(jobCount)
           .then(() => stop())
           .then(() => assertHandlingOrder(flagJobHandled.args.map(head)))
@@ -137,9 +140,21 @@ export default function testIntegration(name, setup, refresh, teardown) {
           countdown.tick();
         });
 
+        const createWorker = () =>
+          Worker({
+            persistenceInterface: environment,
+            queueId: "test-queue",
+            workInstructions: flagJobHandled
+          });
+        const workers = emptyArray(workerCount).map(createWorker);
+
+        log(
+          `created ${workers.length} workers and ${createdJobs.length} jobs.`
+        );
+
         const stop = (() => {
-          const stops = workers.map(w => w.process(flagJobHandled));
-          return () => Promise.all(stops.map(stop => stop()));
+          workers.forEach(w => w.punchIn());
+          return () => Promise.all(workers.map(w => w.punchOut()));
         })();
       });
     };

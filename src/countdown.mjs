@@ -38,10 +38,10 @@ export default class Countdown {
   }
 
   tick() {
-    log("tick");
+    log("tick-tack");
     this.__n = this.__n - 1;
     if (this.__n === 0) {
-      log("tack");
+      log("rriiiiiiingggg");
       this.__task.run();
     }
     return this;

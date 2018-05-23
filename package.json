@@ -7,7 +7,7 @@
     "test": "npm run build:test && npm run test:run-silent",
     "test:verbose": "npm run build:test && npm run test:run-verbose",
     "test:run-silent": "mocha ./lib/bundle.test.js",
-    "test:run-verbose": "DEBUG=* mocha ./lib/bundle.test.js --bail",
+    "test:run-verbose": "DEBUG=queue:*,worker:*,countdown:*,test:* mocha ./lib/bundle.test.js --bail",
     "build:test": "rollup src/index.test.mjs --output.format cjs --output.file lib/bundle.test.js",
     "build": "rollup src/index.mjs --output.format cjs --output.file lib/bundle.js"
   },
