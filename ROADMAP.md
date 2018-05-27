@@ -1,7 +1,3 @@
-* Move countdown to separate library,
-* Clean code up,
-* Set proper logging up,
-* Improve DB error handling,
-* Allow retry policy for tasks,
 * Create db connectors for common engines,
+* Allow for optimization of `pickJob`.
 * Allow detection of stuck jobs, dead workers,

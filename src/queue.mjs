@@ -1,4 +1,4 @@
-export default function createQueue(persistenceInterface, name) {
+export default function createQueue({ persistenceInterface, name }) {
   const PRIORITY = {
     VERY_LOW: 30,
     LOW: 40,

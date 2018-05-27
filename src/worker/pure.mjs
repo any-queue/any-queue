@@ -2,19 +2,12 @@ import debug from "debug";
 import { taggedSum as sum } from "daggy";
 import delay from "delay";
 
-const LaborOutcome = sum("LaborOutcome", {
-  EmptyQueue: [],
-  LockCollision: [],
-  Done: [],
-  Accident: ["details"]
-});
+const wrapPromise = function wrapPromise(x) {
+  return Promise.resolve().then(() => x);
+};
 
 const randomInteger = function randomInteger(min, max) {
   return Math.floor(Math.random() * (max - min) + min);
-};
-
-const wrapPromise = function wrapPromise(x) {
-  return Promise.resolve().then(() => x);
 };
 
 const exponentialBackoff = function exponentialBackoff(
@@ -24,15 +17,22 @@ const exponentialBackoff = function exponentialBackoff(
   return randomInteger(0, 2 ** collisionCount) * backoffDelay;
 };
 
+const LaborOutcome = sum("LaborOutcome", {
+  EmptyQueue: [],
+  LockCollision: [],
+  Done: [],
+  Accident: ["details"]
+});
+
 export default function createWorker({
-  persistence,
-  queueId,
-  workerId,
+  persistenceInterface,
+  queueName,
+  workerName,
   pollingDelay,
   backoffDelay,
-  workInstructions
+  instructions
 }) {
-  const log = debug(`worker:${workerId}:`);
+  const log = debug(`worker:${workerName}:`);
 
   const workOnJob = async function workOnJob() {
     const {
@@ -43,7 +43,7 @@ export default function createWorker({
       unblock,
       updateFinishedJob,
       updateFailedJob
-    } = persistence;
+    } = persistenceInterface;
 
     const jobs = await readJob();
 
@@ -60,8 +60,8 @@ export default function createWorker({
       return LaborOutcome.LockCollision;
     }
 
-    // `followInstructions` might return a value or a Promise, so we convert either type to Promise, so that we can handled them homogenously.
-    return wrapPromise(workInstructions(job)).then(
+    // `instructions` might return a value or a Promise, so we convert either type to Promise, so that we can handled them homogenously.
+    return wrapPromise(instructions(job)).then(
       () =>
         updateFinishedJob(job)
           .then(() => unblock(job._id))
@@ -121,5 +121,5 @@ export default function createWorker({
     return workAgain({ delayTime: 0, collisionCount: 0 });
   };
 
-  return { work: workUntilStopped, id: workerId, queue: queueId };
+  return { work: workUntilStopped, name: workerName, queue: queueName };
 }

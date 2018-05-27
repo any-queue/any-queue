@@ -1,27 +1,29 @@
 import uuid from "uuid/v4";
 import createStatefulWorker from "./stateful.mjs";
 import createPureWorker from "./pure.mjs";
-import createPersistenceInterface from "./persistence.mjs";
+import createPersistenceFacade from "./persistence.mjs";
 
 export default function createWorker({
-  queueId,
-  workerId = uuid(),
+  queueName,
+  workerName = uuid(),
   persistenceInterface,
-  workInstructions
+  instructions,
+  pollingDelay = 1000, // milliseconds
+  backoffDelay = 50 // milliseconds
 }) {
-  const persistence = createPersistenceInterface(
+  const persistenceFacade = createPersistenceFacade(
     persistenceInterface,
-    queueId,
-    workerId
+    queueName,
+    workerName
   );
 
   const worker = createPureWorker({
-    persistence,
-    queueId,
-    workerId,
-    pollingDelay: 1000, // milliseconds
-    backoffDelay: 50, // milliseconds
-    workInstructions
+    persistenceInterface: persistenceFacade,
+    queueName,
+    workerName,
+    pollingDelay,
+    backoffDelay,
+    instructions
   });
 
   return createStatefulWorker(worker);
