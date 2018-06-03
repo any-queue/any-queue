@@ -1,25 +1,26 @@
 {
-  "name": "one-queue",
+  "name": "any-queue",
   "version": "1.0.0",
-  "description": "",
+  "description": "Technology-agnostic, persistent job queue",
   "main": "lib/index.js",
   "scripts": {
-    "test": "npm run build:test && npm run test:run-silent",
-    "test:verbose": "npm run build:test && npm run test:run-verbose",
-    "test:run-silent": "mocha ./lib/bundle.test.js",
-    "test:run-verbose":
-      "DEBUG=queue:*,worker:*,countdown:*,test:* mocha ./lib/bundle.test.js --bail",
-    "build:test":
-      "rollup src/index.test.mjs --output.format cjs --output.file lib/bundle.test.js",
-    "build":
-      "rollup src/index.mjs --output.format cjs --output.file lib/bundle.js"
+    "build": "rollup src/index.mjs --output.format cjs --output.file lib/bundle.js"
   },
-  "keywords": [],
+  "keywords": [
+    "job",
+    "task",
+    "queue",
+    "worker",
+    "pub",
+    "sub",
+    "persistence"
+  ],
   "author": {
     "name": "Gerardo Munguia",
     "email": "<gerardo.munguia.hoyo@gmail.com>",
     "url": "gmunguia.com"
   },
+  "repository": "gmunguia/any-queue",
   "license": "MIT",
   "dependencies": {
     "daggy": "^1.2.0",
@@ -29,16 +30,11 @@
     "uuid": "^3.2.1"
   },
   "devDependencies": {
-    "countdown-promise": "^1.0.0",
     "eslint": "^4.16.0",
     "eslint-config-prettier": "^2.9.0",
     "eslint-plugin-prettier": "^2.5.0",
-    "mocha": "^5.0.0",
-    "mongodb": "^3.0.1",
-    "mysql": "^2.15.0",
     "prettier": "1.10.2",
     "rollup": "^0.54.1",
-    "sinon": "^4.2.2",
     "supports-color": "^5.1.0"
   }
 }
