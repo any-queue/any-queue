@@ -1,6 +1,26 @@
-# a-queue
+#
 
-WIP
+# any-queue
+
+[![npm version](https://img.shields.io/npm/v/any-queue.svg)](https://www.npmjs.com/package/any-queue)
+
+> Technology-agnostic, persistent job queue
+
+## Install
+
+Install it together with a connector:
+
+```
+$ npm install --save any-queue any-queue-mysql
+```
+
+## Test
+
+```
+$ npm test
+```
+
+## Usage
 
 ```js
 import { Queue, Worker } from "any-queue";
@@ -21,8 +41,16 @@ const worker = Worker({
 
 worker.punchIn();
 
-queue.now({ "bar": "foobar" });
-// Will eventually print "[Object object]".
+queue.now({ bar: "foobar" });
+// Will eventually print "{ bar: 'foobar' }".
 
 setTimeout(() => worker.punchOut(), 100);
 ```
+
+## API
+
+wip
+
+## License
+
+MIT © Gerardo Munguia
