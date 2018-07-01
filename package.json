@@ -1,6 +1,6 @@
 {
   "name": "any-queue",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "Technology-agnostic, persistent job queue",
   "main": "lib/bundle.js",
   "scripts": {
