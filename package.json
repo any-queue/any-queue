@@ -20,7 +20,7 @@
     "email": "<gerardo.munguia.hoyo@gmail.com>",
     "url": "gmunguia.com"
   },
-  "repository": "gmunguia/any-queue",
+  "repository": "any-queue/any-queue",
   "license": "MIT",
   "dependencies": {
     "daggy": "^1.2.0",
