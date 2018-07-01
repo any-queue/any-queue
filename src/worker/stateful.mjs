@@ -24,7 +24,7 @@ const createDeferred = function createDeferred() {
 };
 
 export default function createStatefulWorker(worker) {
-  const log = debug(`worker:${worker.id}:`);
+  const log = debug(`anyqueue:worker:${worker.name}:stateful:`);
   let state = WorkerState.AtHome;
 
   const setState = function setState(newState) {
@@ -32,7 +32,9 @@ export default function createStatefulWorker(worker) {
       [WorkerState.AtHome, WorkerState.AtWork],
       [WorkerState.AtWork, WorkerState.GoingHome],
       [WorkerState.GoingHome, WorkerState.AtHome],
-      [WorkerState.AtWork, WorkerState.Injured]
+      [WorkerState.AtWork, WorkerState.Injured],
+      [WorkerState.AtHome, WorkerState.Injured],
+      [WorkerState.GoingHome, WorkerState.Injured]
     ];
 
     const isAllowed = (oldState, newState) =>
@@ -44,7 +46,7 @@ export default function createStatefulWorker(worker) {
       log(`changed from ${state} to ${newState}.`);
       state = newState;
     } else {
-      const error = Error("");
+      const error = Error("Invalid transition");
       log(error);
       state = WorkerState.Injured(error);
     }

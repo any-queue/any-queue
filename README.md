@@ -1,21 +1,27 @@
 # a-queue
+
 WIP
 
 ```js
 import { Queue, Worker } from "any-queue";
-import persistenceInterface from "any-queue-mongodb";
+import anyQueueMysql from "any-queue-mysql";
 
-const queue = Queue({ persistenceInterface, name: "a-queue" });
+const persistenceInterface = anyQueueMysql({
+  uri: "mysql://root:nt3yx7ao2e9@localhost/any-queue-demo"
+});
+
+const queue = Queue({ persistenceInterface, name: "foo" });
 const worker = Worker({
   persistenceInterface,
-  queueName: "a-queue",
+  queueName: "foo",
   instructions: job => {
     console.log(job);
   }
 });
 
-queue.now({ "some-data": "foobar" });
 worker.punchIn();
+
+queue.now({ "bar": "foobar" });
 // Will eventually print "[Object object]".
 
 setTimeout(() => worker.punchOut(), 100);

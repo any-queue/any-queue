@@ -1,4 +1,6 @@
 export default function createQueue({ persistenceInterface, name }) {
+  const { connect, disconnect, createJob, createLock } = persistenceInterface;
+
   const PRIORITY = {
     VERY_LOW: 30,
     LOW: 40,
@@ -11,16 +13,13 @@ export default function createQueue({ persistenceInterface, name }) {
     data,
     { priority = PRIORITY.NORMAL, blockers = [] } = {}
   ) {
-    const { createJob, createLock } = persistenceInterface;
+    await connect();
 
     const job = await createJob({
       queue: name,
       data,
       priority,
       status: blockers.length > 0 ? "blocked" : "new",
-      attempts: 0,
-      outcome: [],
-      processDate: [],
       scheduledDate: Date().toString()
     });
 
@@ -30,19 +29,21 @@ export default function createQueue({ persistenceInterface, name }) {
       )
     );
 
+    disconnect();
+
     return job;
   };
 
   const later = function later() {
-    // TBI
+    // @TODO
   };
 
   const repeat = function repeat() {
-    // TBI
+    // @TODO
   };
 
   const after = function after() {
-    // TBI
+    // @TODO
   };
 
   return {

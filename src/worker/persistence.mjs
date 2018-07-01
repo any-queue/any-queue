@@ -10,7 +10,7 @@ export default function createWorkerPersistenceFacade(
   queueId,
   workerId
 ) {
-  const log = debug(`worker:${workerId}:persistence:`);
+  const log = debug(`anyqueue:worker:${workerId}:persistence:`);
 
   const pickJob = function pickJob(jobs) {
     const maxPriority = jobs.map(j => j.priority).reduce(max, -Infinity);
@@ -18,12 +18,12 @@ export default function createWorkerPersistenceFacade(
     return maxPriorityJobs[randomInteger(0, maxPriorityJobs.length)];
   };
 
-  const unlock = function unlock(job) {
+  const unlock = async function unlock(job) {
     const { updateLock } = persistenceInterface;
 
     return updateLock(
       {
-        job: job._id,
+        job: job.id,
         queue: queueId,
         worker: workerId,
         status: "locked"
@@ -36,13 +36,13 @@ export default function createWorkerPersistenceFacade(
     const { createLock, readLock } = persistenceInterface;
 
     await createLock({
-      job: job._id,
+      job: job.id,
       queue: queueId,
       worker: workerId,
       status: "locked"
     });
     const locks = await readLock({
-      job: job._id,
+      job: job.id,
       queue: queueId,
       status: "locked"
     });
@@ -52,7 +52,7 @@ export default function createWorkerPersistenceFacade(
       "got",
       lockCount,
       "locks for job",
-      job._id,
+      job.id,
       "from",
       locks.map(l => l.worker).join(", ")
     );
@@ -62,24 +62,25 @@ export default function createWorkerPersistenceFacade(
     return lockCount === 1;
   };
 
-  const updateFinishedJob = function updateFinishedJob(job) {
+  const updateFinishedJob = async function updateFinishedJob(job) {
     const { updateJob } = persistenceInterface;
 
-    return updateJob(job._id, { status: "done" });
+    return updateJob(job.id, { status: "done" });
   };
 
-  const updateFailedJob = function updateFailedJob(job, error) {
+  const updateFailedJob = async function updateFailedJob(job, error) {
     const { updateJob } = persistenceInterface;
 
-    return updateJob(job._id, {
+    return updateJob(job.id, {
       status: "failed",
       error: error.toString()
     });
   };
 
-  const readJob = function readJob() {
+  const readJob = async function readJob() {
     log(`reading jobs in queueId ${queueId}`);
     const { readJob } = persistenceInterface;
+
     return readJob({ queue: queueId, status: "new" });
   };
 
@@ -109,7 +110,7 @@ export default function createWorkerPersistenceFacade(
       status: "locked"
     });
 
-    log(`Will remove locks [${locksToRemove.map(l => l._id).join(",")}].`);
+    log(`Will remove locks [${locksToRemove.map(l => l.id).join(",")}].`);
 
     await updateLock(
       { queue: queueId, blocker: blockerId, status: "locked" },
@@ -120,6 +121,8 @@ export default function createWorkerPersistenceFacade(
   };
 
   return {
+    connect: persistenceInterface.connect,
+    disconnect: persistenceInterface.disconnect,
     readJob,
     pickJob,
     tryLock,
